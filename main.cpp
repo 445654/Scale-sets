@@ -1,11 +1,9 @@
 #include <iostream>
 #include <vector>
 #include <opencv2/core/utility.hpp>
-#include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/highgui.hpp>
 #include <set>
-#include <unistd.h>
 
 using namespace std;
 using namespace cv;
@@ -14,18 +12,18 @@ using Pixel = pair<int, int>;
 
 struct Region
 {
-    int id{0}; // TODO remove ?
+    int id{-1}; // TODO remove ?
     set<Pixel> pixels;
     set<int> adjacentRegions; // TODO remove ?
     int perimeter{0};
 };
 
-double mean(const Mat &image, const Region &r)
+double mean(const Mat &image, Region& region)
 {
     double sum;
-    for (Pixel pixel : r.pixels)
+    for (Pixel pixel : region.pixels)
         sum += image.at<float>(pixel.first, pixel.second);
-    return sum / r.pixels.size();
+    return sum / (double) region.pixels.size();
 }
 
 /**
@@ -33,10 +31,10 @@ double mean(const Mat &image, const Region &r)
  * Computes the variance for each channels and returns the means of these variances.
  *
  * @param image rgb image
- * @param r pixels region
+ * @param region pixels region
  * @return variance of that region
  */
-double variance(Mat image, Region r)
+double variance(const Mat& image, Region& region)
 {
     double variances[3];
 
@@ -48,10 +46,11 @@ double variance(Mat image, Region r)
     for (int i = 0; i < 3; ++i)
     {
         double sum = 0.;
-        double meanChannel = mean(channels[i], r);
-        for (Pixel pixel : r.pixels)
-            sum += pow(channels[i].at<float>(pixel.first, pixel.second) - meanChannel, 2);
-        variances[i] = sum / r.pixels.size();
+        double meanChannel = mean(channels[i], region);
+        for (Pixel pixel : region.pixels) {
+            sum += pow(((double) channels[i].at<float>(pixel.first, pixel.second)) - meanChannel, 2);
+        }
+        variances[i] = sum / (double) region.pixels.size();
     }
 
     // mean of channels variances
@@ -66,15 +65,17 @@ double variance(Mat image, Region r)
  * Return the von neumann neighborhood of the pixel passed in parameters.
  *
  * @param pixel
- * @return
+ * @return von neumann neighborhood
  */
 vector<Pixel> getPixelNeighbors(Pixel pixel)
 {
     vector<Pixel> neighbors;
-    neighbors.push_back(Pixel(pixel.first - 1, pixel.second));
-    neighbors.push_back(Pixel(pixel.first, pixel.second + 1));
-    neighbors.push_back(Pixel(pixel.first + 1, pixel.second));
-    neighbors.push_back(Pixel(pixel.first, pixel.second - 1));
+
+    neighbors.emplace_back(pixel.first - 1, pixel.second);
+    neighbors.emplace_back(pixel.first, pixel.second + 1);
+    neighbors.emplace_back(pixel.first + 1, pixel.second);
+    neighbors.emplace_back(pixel.first, pixel.second - 1);
+
     return neighbors;
 }
 
@@ -102,29 +103,30 @@ set<int> getInitRegionNeighbors(Pixel initPixel, int width, int height)
     return neighbors;
 }
 
+
 /**
  * Return the perimeter length of the two regions if they were to be merged.
  * It's the sum of their original perimeters minus the length of their intersection.
  * Complexity of min(n_r1 log n_r2 ; n_r2 log n_r1).
  *
- * @param r1 region to merge
- * @param r2 region to merge
+ * @param region1 region to merge
+ * @param region2 region to merge
  * @return perimeter of the merged region
  */
-int mergedPerimeter(Region r1, Region r2)
+int mergedPerimeter(const Region& region1, const Region& region2)
 {
     // checking which region is smaller
     Region smallRegion;
     Region bigRegion;
-    if (r1.pixels.size() < r2.pixels.size())
+    if (region1.pixels.size() < region2.pixels.size())
     {
-        smallRegion = r1;
-        bigRegion = r2;
+        smallRegion = region1;
+        bigRegion = region2;
     }
     else
     {
-        smallRegion = r2;
-        bigRegion = r1;
+        smallRegion = region2;
+        bigRegion = region1;
     }
 
     // looping through smallest region to check
@@ -133,159 +135,267 @@ int mergedPerimeter(Region r1, Region r2)
     for (Pixel pixel : smallRegion.pixels) // n
     {
         vector<Pixel> neighbors = getPixelNeighbors(pixel);
-        for (auto pixel : neighbors) // 4n
-            if (bigRegion.pixels.find(pixel) != bigRegion.pixels.end()) // log(n)
+        for (auto neighbor : neighbors) // 4n
+            if (bigRegion.pixels.find(neighbor) != bigRegion.pixels.end()) // log(n)
                 length++;
     }
     return length;
 }
 
-double energy(Mat image, Region r, double lambda)
+double energy(const Mat& image, Region& region, double lambda)
 {
-    return variance(image, r) + lambda * r.perimeter;
+    return variance(image, region) + lambda * region.perimeter;
 }
 
-Region simulatedMerge(Region* r1, Region* r2, vector<vector<int>> regionIds)
+Region simulatedMerge(Region* region1, Region* region2)
 {
     Region outR1;
 
     // TODO copy pixels and adjacent regions to avoid side effect
     // copy r1
-    outR1.id = r1->id;
-    for (auto it = r1->pixels.begin(); it != r1->pixels.end(); ++it)
-        outR1.pixels.emplace(*it);
-    for (auto it = r1->adjacentRegions.begin(); it != r1->adjacentRegions.end(); ++it)
-        outR1.adjacentRegions.emplace(*it);
-    outR1.perimeter = r1->perimeter;
+    outR1 = *region1;
+    //outR1.perimeter = region1->perimeter;
 
     // update r1
-    outR1.pixels.merge(r2->pixels); // merge pixels
-    outR1.perimeter = outR1.perimeter + r2->perimeter - mergedPerimeter(outR1, *r2); // update perimeter
-    outR1.adjacentRegions.merge(r2->adjacentRegions); // add new adjacent regions
+    outR1.perimeter = outR1.perimeter + region2->perimeter - mergedPerimeter(outR1, *region2); // update perimeter
+
+    outR1.pixels.merge(region2->pixels); // merge pixels
+    outR1.adjacentRegions.merge(region2->adjacentRegions); // add new adjacent regions
+
 
     return outR1;
 }
 
 /**
- * Merges two regions by adding the pixels of r2 into r1 without duplicating them.
- * r1 pixels are modified, r2's are not modified.
+ * Merges two regions by adding the pixels of region2 into region1 without duplicating them.
+ * region1 pixels are modified, region2's are not modified.
  * Returns the new region ids matrix.
+ * Updates regionIds matrix.
  *
- * @param r1 will have r2 merged into
- * @param r2 will be merged into r1
+ * @param region1 will have region2 merged into
+ * @param region2 will be merged into region1
+ * @param regionIds region ids correspondence matrix, is modified after execution
  * @return new region ids matrix
  */
-Region merge(Region* r1, Region* r2, vector<vector<int>> regionIds)
+Region merge(Region region1, Region region2, vector<vector<int>>* regionIds)
 {
-    Region outR1 = simulatedMerge(r1, r2, regionIds);
+    // merge region2 into region1
+    Region mergedRegion = region1;
+    mergedRegion.pixels.merge(region2.pixels); // merge pixels
+    mergedRegion.adjacentRegions.merge(region2.adjacentRegions); // add new adjacent regions
+    mergedRegion.adjacentRegions.erase(find(mergedRegion.adjacentRegions.begin(), mergedRegion.adjacentRegions.end(), region2.id));
+    mergedRegion.adjacentRegions.erase(find(mergedRegion.adjacentRegions.begin(), mergedRegion.adjacentRegions.end(), region1.id));
 
-    // switch region ids to r1's for pixels which were in r2
-    for (int i = 0; i < regionIds.size(); ++i)
-        for (int j = 0; j < regionIds[i].size(); ++j)
-            if (regionIds[i][j] == r2->id)
-                regionIds[i][j] = r1->id;
+    // switch region ids to region1's for pixels which were in region2
+    for (auto & regionId : *regionIds)
+        for (int & id : regionId)
+            if (id == region2.id)
+                id = region1.id;
 
-    return outR1;
+    return mergedRegion;
 }
 
-double optimalLambda(Region r1, Region r2, Mat image, vector<vector<int>> regionIds)
+/**
+ * Returns the optimal lambda value for the two regions.
+ * The optimal lambda value is the one that minimizes the energy function.
+ *
+ * @param region1
+ * @param region2
+ * @param image
+ * @return optimal lambda value
+ */
+double optimalLambda(Region& region1, Region& region2, const Mat& image)
 {
-    double varA, varB, varAUB, perA, perB, perAUB, lambda;
-    varA = variance(image, r1);
-    varB = variance(image, r2);
+    double variance1 = variance(image, region1);
+    double variance2 = variance(image, region2);
 
-    perA = r1.perimeter;
-    perB = r2.perimeter;
+    double perimeter1 = region1.perimeter;
+    double perimeter2 = region2.perimeter;
 
-    Region mergedRegion = simulatedMerge(&r1, &r2, regionIds);
+    // merge region2 into region1
+    Region mergedRegion = region1;
+    set<Pixel> region2Pixels = region2.pixels;
+    set<int> region2AdjacentRegions = region2.adjacentRegions;
+    mergedRegion.pixels.merge(region2Pixels); // merge pixels
+    mergedRegion.adjacentRegions.merge(region2AdjacentRegions); // add new adjacent regions
 
-    varAUB = variance(image, mergedRegion);
-    perAUB = mergedRegion.perimeter;
+    mergedRegion.adjacentRegions.erase(find(mergedRegion.adjacentRegions.begin(), mergedRegion.adjacentRegions.end(), region2.id));
+    mergedRegion.adjacentRegions.erase(find(mergedRegion.adjacentRegions.begin(), mergedRegion.adjacentRegions.end(), region1.id));
 
-    lambda = (varA + varB - varAUB) / (perA + perB - perAUB);
+    double variance1U2 = variance(image, mergedRegion);
+    double perimeter1U2 = mergedRegion.perimeter;
+
+    double lambda = (variance1 + variance2 - variance1U2) / (perimeter1 + perimeter2 - perimeter1U2);
 
     return lambda;
 }
 
+/**
+ * Displays the regions of the image with random colors.
+ *
+ * @param input input image
+ * @param regions regions of the image
+ * @param regionIds correspondence table between pixels and regions
+ */
+void displayRegions(const Mat& input, vector<Region> regions, vector<vector<int>> regionIds)
+{
+    Mat output;
+    input.copyTo(output);
+
+    vector<int> encounteredRegions;
+    vector<Vec3b> encounteredRegionsColors;
+
+    // coloring regions in output with a new random color for each region
+    for (int i = 0; i < input.rows; ++i)
+        for (int j = 0; j < input.cols; ++j)
+        {
+            int regionId = regions[regionIds.at(i).at(j)].id;
+
+            // check if region has already been encountered, if not, create a new color for it
+            if (find(encounteredRegions.begin(), encounteredRegions.end(), regionId) == encounteredRegions.end())
+            {
+                encounteredRegions.push_back(regionId);
+                encounteredRegionsColors.emplace_back(rand() % 255, rand() % 255, rand() % 255);
+            }
+
+            // paint output with corresponding color
+            output.at<Vec3f>(i, j) = encounteredRegionsColors[regionId];
+        }
+
+    // show merged regions image
+    namedWindow("Merged regions", WINDOW_AUTOSIZE);
+    imshow("Merged regions", output);
+}
+
 void scaleSets(Mat input)
 {
+    // create two fake init regions
+    vector<Region> regions; // array of regions
+    vector<int> activeRegions; // array of regions present in image
+    regions.push_back(Region{
+            0,
+            set<Pixel>(),
+            set<int>{1, 2},
+            4
+    });
+    activeRegions.push_back(0);
+
+    regions.push_back(Region{
+            1,
+            set<Pixel>(),
+            set<int>{0,3},
+            4
+    });
+    activeRegions.push_back(1);
+
+    regions.push_back(Region{
+            2,
+            set<Pixel>(),
+            set<int>{0,3},
+            4
+    });
+    activeRegions.push_back(2);
+
+    regions.push_back(Region{
+            3,
+            set<Pixel>(),
+            set<int>{2,1},
+            4
+    });
+    activeRegions.push_back(3);//*/
+
+    // fill fake regions with their pixels (they take half of the image)
+    // and mark their pixels as part of their region in regionIds
     vector<vector<int>> regionIds;
     for (int i = 0; i < input.rows; ++i)
     {
         regionIds.push_back(vector<int>());
         for (int j = 0; j < input.cols; ++j)
-            regionIds[i].push_back(i * input.cols + j);
-    }
-    // create region for each pixel
-    vector<Region> regions; // array of regions
-    for (int i = 0; i < input.rows; ++i)
-        for (int j = 0; j < input.cols; ++j)
         {
-            regions.push_back(Region{
+            // partition pixel between regions
+            if (j < 75 && i < 50)
+            {
+                regions[0].pixels.emplace(Pixel(i, j));
+                regionIds[i].push_back(0);// i * input.cols + j;
+            }
+            else if (j >= 75 && i < 50)
+            {
+                regions[1].pixels.emplace(Pixel(i, j));
+                regionIds[i].push_back(1);
+            }
+            else if (j < 75 && i >= 50)
+            {
+                regions[2].pixels.emplace(Pixel(i, j));
+                regionIds[i].push_back(2);
+            }
+            else
+            {
+                regions[3].pixels.emplace(Pixel(i, j));
+                regionIds[i].push_back(3);
+            }
+
+            /*regions.push_back(Region{
                     i * input.cols + j,
                     set<Pixel>{Pixel(i, j)},
                     getInitRegionNeighbors(Pixel(i, j), input.cols, input.rows),
                     4
             });
+            activeRegions.push_back(i * input.cols + j);//*/
         }
-
-    int nbRegions = input.rows * input.cols;
-    int nbCount = 20000;
+    }
+    //displayRegions(input, regions, regionIds);
+    int nbCount = 5;
     int count = nbCount;
-    while (nbRegions != 1 && count != 0)
+    while (activeRegions.size() > 1 && count != 0)
     {
+        cout << "nbRegions " << activeRegions.size() << endl;
         Region r1, r2;
         double lambdaMin = 100000000.;
         // TODO : handle 'active' regions and optimise code (obj don't calculate the same distance twice)
-        vector<int> doneRegion;
-        // find min lambda and the merge associated with it
-        for (int i = 0; i < regionIds.size(); ++i) {
-            for (int j = 0; j < regionIds[0].size(); ++j) {
-                if (find(doneRegion.begin(), doneRegion.end(), regionIds[i][j]) != doneRegion.end()) {
-                    for (int neighborIdx: regions[regionIds[i][j]].adjacentRegions) {
-                        if (find(doneRegion.begin(), doneRegion.end(), neighborIdx) != doneRegion.end()) {
-                            Region neighbor = regions[neighborIdx];
-                            // TODO: copy regions
-                            double lambda = optimalLambda(regions[i], neighbor, input, regionIds);
-                            if (lambda < lambdaMin) {
-                                lambdaMin = lambda;
-                                r1 = regions[i];
-                                r2 = neighbor;
-                            }
-                        }
+        vector<int> doneRegions;
+
+        // find minimal lambda and the merge region associated with it
+        // loop through all present regions
+        for (int regionId : activeRegions)
+        {
+            for (int neighborIdx: regions[regionId].adjacentRegions)
+            {
+                // neighbor is not in doneRegions
+                // TODO : update indexs (problem : if neighbor isn't active anymore)
+                if (find(doneRegions.begin(), doneRegions.end(), neighborIdx) == doneRegions.end())
+                {
+                    double lambda = optimalLambda(regions[regionId], regions[neighborIdx], input);
+                    if (lambda < lambdaMin)
+                    {
+                        lambdaMin = lambda;
+                        r1 = regions[regionId];
+                        r2 = regions[neighborIdx];
                     }
-                    doneRegion.push_back(i * regionIds.size() + j);
                 }
             }
+            doneRegions.push_back(regionId);
         }
-        r1 = merge(&r1,&r2, regionIds);
-        if (count % (nbCount/100) == 100)
-            cout << "end loop ! " << count << endl;
+        cout << "merge " << r1.id << " " << r2.id << endl;
+        if (r1.id == r2.id) {
+            cout << "ERROR merge with itself" << endl;
+        }
+        regions[r1.id] = merge(r1,r2, &regionIds);
+
+        activeRegions.erase(find(activeRegions.begin(), activeRegions.end(), r2.id));
+
+        //if (count % (nbCount/100) == 100)
+            //cout << "Count : " << count << endl;
         count--;
-        nbRegions--;
     }
-    Mat output;
-    input.copyTo(output);
 
-    for (int i = 0; i < input.rows; ++i)
-        for (int j = 0; j < input.cols; ++j)
-            if (regions[regionIds.at(i).at(j)].pixels.size() != 1)
-            {
-                cout << regions[regionIds.at(i).at(j)].pixels.size() << endl;
-                output.at<Vec3b>(i, j) = Vec3b(255,0,0); // bgr space
-            }
-
-
-    // show output image
-    namedWindow("Output", WINDOW_AUTOSIZE);
-    imshow("Output", output);
-    //  find regions with min energy
-    //  merge the two regions
+    displayRegions(input, regions, regionIds);//*/
 }
+
 
 int main()
 {
     Mat input = imread("../images/pobo_small.png", IMREAD_COLOR);
+    input.convertTo(input, CV_32FC3, 1.0/255.0); // convert image to float type
 
     // show original image
     namedWindow("Original", WINDOW_AUTOSIZE);
@@ -296,20 +406,14 @@ int main()
     Mat output;
     input.copyTo(output);
 
-    // coloring merged regions in output
-    /*for (int i = 0; i < input.rows; ++i)
-        for (int j = 0; j < input.cols; ++j)
-            if (regions[regionIds.at(i).at(j)].pixels.size() != 1)
-            {
-                //cout << regions[regionIds.at(i).at(j)].pixels.size() << endl;
-                output.at<Vec3b>(i, j) = Vec3b(255,0,0); // bgr space
-            }
-    */
-
     // show output image
     //namedWindow("Output", WINDOW_AUTOSIZE);
     //imshow("Output", output);
-
-    waitKey(0);
+    while (true) {
+        int keycode = waitKey( 50 );
+        int asciicode = keycode & 0xff;
+        if (asciicode == 'q')
+            break;
+    }
     return 0;
 }
