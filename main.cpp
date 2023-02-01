@@ -263,13 +263,10 @@ void scaleSets(const Mat &input)
     channels.push_back(tmp[1]);
     channels.push_back(tmp[2]);
     int imageSize = input.rows * input.cols;
-    vector<vector<double>> lambdaMatrix;
+    double** lambdaMatrix = (double**) malloc(imageSize * sizeof(double*));
 
-    for (int i = 0; i < input.rows * input.cols; ++i) {
-        lambdaMatrix.emplace_back(vector<double>());
-        for (int j = 0; j < input.rows * input.cols; ++j) {
-            lambdaMatrix[i].emplace_back(0);
-        }
+    for (int i = 0; i < imageSize; ++i) {
+        lambdaMatrix[i] = (double*) malloc(imageSize * sizeof(double));
     }
 
     // create a region for each pixel
@@ -385,6 +382,12 @@ void scaleSets(const Mat &input)
         }
         count--;
     }
+
+    for (int i = 0; i < input.rows * input.cols; ++i)
+    {
+        free(lambdaMatrix[i]);
+    }
+    free(lambdaMatrix);
 
     displayRegions(input, regions, regionIds);
 }
