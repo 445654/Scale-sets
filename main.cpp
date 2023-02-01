@@ -164,7 +164,7 @@ Region merge(const Region &region1, Region region2, vector<vector<int>> &regionI
     mergedRegion.adjacentRegions.erase(
             find(mergedRegion.adjacentRegions.begin(), mergedRegion.adjacentRegions.end(), region1.id));
 
-    mergedRegion.perimeter = mergedPerimeter(region1, region2);
+    mergedRegion.perimeter = region2.perimeter + region1.perimeter + mergedPerimeter(region1, region2);
 
     // switch region ids to region1's for pixels which were in region2
     for (auto &regionId: regionIds)
@@ -299,7 +299,7 @@ void scaleSets(const Mat &input)
     }
 
 
-    int nbCount = 1200;
+    int nbCount = 4500;
     int count = nbCount;
     time_t timeAtLoopStart, timeAfterActiveRegionsPassed, timeAfterEverything, totalItTime = 0, totalTimeLoop = 0, totalTimeUpdate = 0;
     double totalNeighbors = 0;
@@ -320,6 +320,9 @@ void scaleSets(const Mat &input)
             // ~4
             for (int neighborIdx: regions[regionId].adjacentRegions)
             {
+                int tmp = neighborIdx % input.rows;
+                int tmp2 = (neighborIdx-tmp) / input.rows;
+                //int trueNI = regionIds.at(tmp2).at(tmp);
                 // neighbor is not in doneRegions
                 // TODO : update indexs (problem : if neighbor isn't active anymore)
                 // x
@@ -353,10 +356,12 @@ void scaleSets(const Mat &input)
             lambdaMatrix[newRegionId][neighborId] = lambda;
             lambdaMatrix[neighborId][newRegionId] = lambda;
             // check if neighborId is also a neighbor of r2
+            // TODO : avoid this update
             if (regions[neighborId].adjacentRegions.count(r2.id) != 0)
             {
                 regions[neighborId].adjacentRegions.erase(r2.id);
-                regions[neighborId].adjacentRegions.insert(newRegionId);
+                if (regions[neighborId].adjacentRegions.count(newRegionId) == 0)
+                    regions[neighborId].adjacentRegions.insert(newRegionId);
             }
         }
         totalNeighbors += regions[newRegionId].adjacentRegions.size();
@@ -380,6 +385,7 @@ void scaleSets(const Mat &input)
             totalTimeUpdate = 0;
             totalNeighbors = 0;
         }
+
         count--;
     }
 
