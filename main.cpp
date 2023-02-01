@@ -262,6 +262,15 @@ void scaleSets(const Mat &input)
     channels.push_back(tmp[0]);
     channels.push_back(tmp[1]);
     channels.push_back(tmp[2]);
+    int imageSize = input.rows * input.cols;
+    vector<vector<double>> lambdaMatrix;
+
+    for (int i = 0; i < input.rows * input.cols; ++i) {
+        lambdaMatrix.emplace_back(vector<double>());
+        for (int j = 0; j < input.rows * input.cols; ++j) {
+            lambdaMatrix[i].emplace_back(0);
+        }
+    }
 
     // create a region for each pixel
     for (int i = 0; i < input.rows; ++i)
@@ -282,11 +291,23 @@ void scaleSets(const Mat &input)
         }
     }
 
-    int nbCount = 3;
+    for (int regionId: activeRegions)
+    {
+        for (int neighborIdx: regions[regionId].adjacentRegions)
+        {
+            double lambda = optimalLambda(regions[regionId], regions[neighborIdx], channels);
+            lambdaMatrix[regionId][neighborIdx] = lambda;
+            lambdaMatrix[neighborIdx][regionId] = lambda;
+        }
+    }
+
+
+    int nbCount = 1200;
     int count = nbCount;
+    time_t timeAtLoopStart, timeAfterActiveRegionsPassed, timeAfterEverything, totalItTime = 0, totalTimeLoop = 0, totalTimeUpdate = 0;
+    double totalNeighbors = 0;
     while (activeRegions.size() > 1 && count != 0)
     {
-        time_t timeAtLoopStart, timeAfterActiveRegionsPassed, timeAfterEverything;
         timeAtLoopStart = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 
         Region r1, r2;
@@ -305,9 +326,10 @@ void scaleSets(const Mat &input)
                 // neighbor is not in doneRegions
                 // TODO : update indexs (problem : if neighbor isn't active anymore)
                 // x
-                if (find(doneRegions.begin(), doneRegions.end(), neighborIdx) == doneRegions.end())
+                // we use the fact that the activeRegions is sorted
+                if (neighborIdx > regionId)
                 {
-                    double lambda = optimalLambda(regions[regionId], regions[neighborIdx], channels);
+                    double lambda = lambdaMatrix[regionId][neighborIdx];
                     if (lambda < lambdaMin)
                     {
                         lambdaMin = lambda;
@@ -320,30 +342,47 @@ void scaleSets(const Mat &input)
         }
         timeAfterActiveRegionsPassed = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 
+        int newRegionId = r1.id;
         // r2 is merged into r1, only r1 remains
-        regions[r1.id] = merge(r1, r2, regionIds);
+        regions[newRegionId] = merge(r1, r2, regionIds);
 
-        regions[r1.id].variance = variance(channels, regions[r1.id]);
+        regions[newRegionId].variance = variance(channels, regions[newRegionId]);
 
         // update neighbors of merged region :
         // delete r2 and add r1 in the neighbors list of merged region neighbors
-        for (int neighborId: regions[r1.id].adjacentRegions)
+        for (int neighborId: regions[newRegionId].adjacentRegions)
         {
+            double lambda = optimalLambda(regions[newRegionId], regions[neighborId], channels);
+            lambdaMatrix[newRegionId][neighborId] = lambda;
+            lambdaMatrix[neighborId][newRegionId] = lambda;
             // check if neighborId is also a neighbor of r2
             if (regions[neighborId].adjacentRegions.count(r2.id) != 0)
             {
                 regions[neighborId].adjacentRegions.erase(r2.id);
-                regions[neighborId].adjacentRegions.insert(r1.id);
+                regions[neighborId].adjacentRegions.insert(newRegionId);
             }
         }
+        totalNeighbors += regions[newRegionId].adjacentRegions.size();
 
         activeRegions.erase(find(activeRegions.begin(), activeRegions.end(), r2.id));
 
         timeAfterEverything = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 
-        cout << "duration of loop : " << (timeAfterActiveRegionsPassed - timeAtLoopStart) << " duration of the rest : "
-             << (timeAfterEverything - timeAfterActiveRegionsPassed) << endl;
-
+        totalItTime += (timeAfterEverything - timeAtLoopStart);
+        totalTimeLoop += (timeAfterActiveRegionsPassed - timeAtLoopStart);
+        totalTimeUpdate += (timeAfterEverything - timeAfterActiveRegionsPassed);
+        //cout << "duration of loop : " << (timeAfterActiveRegionsPassed - timeAtLoopStart) << " duration of the rest : "
+        //     << (timeAfterEverything - timeAfterActiveRegionsPassed) << endl;
+        if (count % 100 == 0) {
+            cout << count << " total : "
+                 << totalItTime << " loop : " << totalTimeLoop
+                 << " rest : " << totalTimeUpdate
+                 << " neighbors : " << totalNeighbors << endl;
+            totalItTime = 0;
+            totalTimeLoop = 0;
+            totalTimeUpdate = 0;
+            totalNeighbors = 0;
+        }
         count--;
     }
 
