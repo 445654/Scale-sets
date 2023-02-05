@@ -50,6 +50,20 @@ double variance(Region &region)
     return (region.t / n)  - pow(region.s / n, 2);
 }
 
+double variance(const Mat &im, Region &region)
+{
+    double variances;
+
+    // variance for each channels
+    double sum = 0.;
+    double meanChannel = mean(im, region);
+    for (Pixel pixel: region.pixels) // n_r
+        sum += pow(((double) im.at<float>(pixel.first, pixel.second)) - meanChannel, 2);
+    variances = sum / (double) region.pixels.size();
+
+    return variances ;
+}
+
 /**
  * Return the von neumann neighborhood of the pixel passed in parameters.
  *
@@ -161,7 +175,7 @@ Region merge(const Region &region1, Region region2, vector<vector<int>> &regionI
 
     mergedRegion.t = (region1.t + region2.t);
     //mergedRegion.t = (n * region1.t + n_p * region2.t) / mergedRegion.size;
-    mergedRegion.s = (n * region1.s + n_p * region2.s) / mergedRegion.size; // / mergedRegion.size
+    mergedRegion.s = (region1.s + region2.s); // / mergedRegion.size
     //mergedRegion.s = (n * region1.s + n_p * region2.s) / mergedRegion.size; // / mergedRegion.size
 
 
@@ -183,10 +197,14 @@ Region merge(const Region &region1, Region region2, vector<vector<int>> &regionI
  * @param channels
  * @return optimal lambda value
  */
-double optimalLambda(Region &region1, Region &region2)
+double optimalLambda(Region &region1, Region &region2, const Mat& im)
 {
-    double variance1 = variance(region1);
-    double variance2 = variance(region2);
+    double tmp1 = variance(im, region1), tmp2 = variance(region1);
+    assert(tmp1 == tmp2);
+    double tmp3 = variance(im, region2), tmp4 = variance(region2);
+    assert(tmp3 == tmp4);
+    double variance1 = variance(im, region1);
+    double variance2 = variance(im, region2);
 
     double perimeter1 = region1.perimeter;
     double perimeter2 = region2.perimeter;
@@ -199,11 +217,12 @@ double optimalLambda(Region &region1, Region &region2)
     // merged region lambda
     double n = region1.size;
     double n_p = region2.size;
-    double t = (region1.t + region2.t);
-    double s = (n * region1.s + n_p * region2.s) / (n_p + n);
-    double variance1U2 = (t / (n + n_p) - pow(s, 2)); // / (n + n_p)
-    double perimeter1U2 = mergedPerimeter(region1, region2); // min(n_r1 log n_r2 ; n_r2 log n_r1)
-    double lambda = (variance1 + variance2 - variance1U2) / (perimeter1 + perimeter2 - perimeter1U2);
+    mergedRegion.t = (region1.t + region2.t);
+    mergedRegion.s = (region1.s + region2.s);
+    mergedRegion.size = n + n_p;
+    double variance1U2 = variance(mergedRegion) ;//= (t / (n + n_p) - pow(s / (n_p + n), 2)); // / (n + n_p)
+    double perimeter1U2 = perimeter1 + perimeter2 - mergedPerimeter(region1, region2); // min(n_r1 log n_r2 ; n_r2 log n_r1)
+    double lambda = (variance1 + variance2 - variance1U2) / (perimeter1U2 - perimeter1 - perimeter2);
 
     return lambda;
 }
@@ -266,7 +285,7 @@ void scaleSets(const Mat &input)
     vector<Mat> channels;
     channels.push_back(tmp[0]);
     channels.push_back(tmp[1]);
-    channels.push_back(tmp[2]);*/
+    channels.push_back(tmp[2]);//*/
     int imageSize = input.rows * input.cols;
     std::map<std::pair<int,int>, double> lambdaMatrix;
 
@@ -286,14 +305,11 @@ void scaleSets(const Mat &input)
             };
 
             //for (int k = 0; k < 3; ++k) {
-            r.t += pow(input.at<float>(i, j), 2);
-            r.s += input.at<float>(i, j);
+                r.t += pow(input.at<float>(i, j), 2);
+                r.s += input.at<float>(i, j);
             //}
-            cout << input.at<float>(i, j) << " : " << r.t << " : " << r.s << endl;
-            //regions[j].t /= 3;
-            //regions[j].s /= 3;
-            // TODO : calc s and t
-            //regions[j].variance = variance(channels, regions[j]);
+            //r.t /= 3;
+            //r.s /= 3;
             regions.emplace_back(r);
             regionIds[i].push_back(id);
             activeRegions.push_back(id);
@@ -304,14 +320,14 @@ void scaleSets(const Mat &input)
     {
         for (int neighborIdx: regions[regionId].adjacentRegions)
         {
-            double lambda = optimalLambda(regions[regionId], regions[neighborIdx]);
+            double lambda = optimalLambda(regions[regionId], regions[neighborIdx], input);
             lambdaMatrix.emplace(pair<int,int>(regionId,neighborIdx), lambda);
             lambdaMatrix.emplace(pair<int,int>(neighborIdx, regionId), lambda);
         }
     }
 
 
-    int nbCount = 11;
+    int nbCount = 12;
     int count = nbCount;
     time_t timeAtLoopStart, timeAfterActiveRegionsPassed, timeAfterRemove, timeAfterEverything, totalItTime = 0, totalTimeLoop = 0, totalTimeRemove = 0, totalTimeUpdate = 0;
     double totalNeighbors = 0;
@@ -354,7 +370,7 @@ void scaleSets(const Mat &input)
         }
         timeAfterActiveRegionsPassed = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 
-        cout << "=========== " << "merge" << " ===========" << endl;
+        /*cout << "=========== " << "merge" << " ===========" << endl;
         cout << "t: " << r1.t << " s: " << r1.s << endl;
         for (auto pix : r1.pixels)
             cout << pix.first << " " << pix.second << " : ";
@@ -363,7 +379,7 @@ void scaleSets(const Mat &input)
         for (auto pix : r2.pixels)
             cout << pix.first << " " << pix.second << " : ";
         cout << endl;
-        cout << "lmin: " << lambdaMin << endl;
+        cout << "lmin: " << lambdaMin << endl;*/
 
         int newRegionId = r1.id;
         // r2 is merged into r1, only r1 remains
@@ -380,7 +396,7 @@ void scaleSets(const Mat &input)
         // delete r2 and add r1 in the neighbors list of merged region neighbors
         for (int neighborId: regions[newRegionId].adjacentRegions)
         {
-            double lambda = optimalLambda(regions[newRegionId], regions[neighborId]);
+            double lambda = optimalLambda(regions[newRegionId], regions[neighborId], input);
             lambdaMatrix.emplace(pair<int,int>(newRegionId, neighborId), lambda);
             lambdaMatrix.emplace(pair<int,int>(neighborId, newRegionId), lambda);
             // check if neighborId is also a neighbor of r2
@@ -405,8 +421,9 @@ void scaleSets(const Mat &input)
         //cout << "duration of loop : " << (timeAfterActiveRegionsPassed - timeAtLoopStart) << " duration of the rest : "
         //     << (timeAfterEverything - timeAfterActiveRegionsPassed) << endl;
         if (count % 100 == 0) {
-            cout << count << " total : "
-                 << totalItTime << " loop : " << totalTimeLoop
+            cout << count
+                 << " total : " << totalItTime
+                 << " loop : " << totalTimeLoop
                  << " remove : " << totalTimeRemove
                  << " rest : " << totalTimeUpdate
                  << " neighbors : " << totalNeighbors
