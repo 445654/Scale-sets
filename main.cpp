@@ -47,7 +47,7 @@ double mean(const Mat &image, Region &region)
 double variance(Region &region)
 {
     double n = region.size;
-    return (region.t / n)  - pow(region.s / n, 2);
+    return (region.t / n) - pow(region.s / n, 2);
 }
 
 double variance(const Mat &im, Region &region)
@@ -61,7 +61,7 @@ double variance(const Mat &im, Region &region)
         sum += pow(((double) im.at<float>(pixel.first, pixel.second)) - meanChannel, 2);
     variances = sum / (double) region.pixels.size();
 
-    return variances ;
+    return variances;
 }
 
 /**
@@ -90,7 +90,7 @@ vector<Pixel> getPixelNeighbors(Pixel pixel)
  * @param height image height
  * @return ids of the neighbor regions
  */
-set<int> getInitRegionNeighbors(const Pixel& initPixel, const int& width, const int& height)
+set<int> getInitRegionNeighbors(const Pixel &initPixel, const int &width, const int &height)
 {
     set<int> neighbors;
 
@@ -107,7 +107,7 @@ set<int> getInitRegionNeighbors(const Pixel& initPixel, const int& width, const 
 }
 
 /**
- * Return the perimeter length of the two regions if they were to be merged.
+ * Return the length of the perimeter intersection of two regions.
  * It's the sum of their original perimeters minus the length of their intersection.
  * Complexity of min(n_r1 log n_r2 ; n_r2 log n_r1).
  *
@@ -115,7 +115,7 @@ set<int> getInitRegionNeighbors(const Pixel& initPixel, const int& width, const 
  * @param region2 region to merge
  * @return perimeter of the merged region
  */
-int mergedPerimeter(const Region &region1, const Region &region2)
+int intersectionPerimeter(const Region &region1, const Region &region2)
 {
     // checking which region is smaller
     Region smallRegion;
@@ -166,7 +166,7 @@ Region merge(const Region &region1, Region region2, vector<vector<int>> &regionI
     mergedRegion.adjacentRegions.erase(
             find(mergedRegion.adjacentRegions.begin(), mergedRegion.adjacentRegions.end(), region1.id));
 
-    mergedRegion.perimeter = region2.perimeter + region1.perimeter + mergedPerimeter(region1, region2);
+    mergedRegion.perimeter = region2.perimeter + region1.perimeter + intersectionPerimeter(region1, region2);
 
     int n = region1.size;
     int n_p = region2.size;
@@ -197,7 +197,7 @@ Region merge(const Region &region1, Region region2, vector<vector<int>> &regionI
  * @param channels
  * @return optimal lambda value
  */
-double optimalLambda(Region &region1, Region &region2, const Mat& im)
+double optimalLambda(Region &region1, Region &region2, const Mat &im)
 {
     double tmp1 = variance(im, region1), tmp2 = variance(region1);
     assert(tmp1 == tmp2);
@@ -220,8 +220,9 @@ double optimalLambda(Region &region1, Region &region2, const Mat& im)
     mergedRegion.t = (region1.t + region2.t);
     mergedRegion.s = (region1.s + region2.s);
     mergedRegion.size = n + n_p;
-    double variance1U2 = variance(mergedRegion) ;//= (t / (n + n_p) - pow(s / (n_p + n), 2)); // / (n + n_p)
-    double perimeter1U2 = perimeter1 + perimeter2 - mergedPerimeter(region1, region2); // min(n_r1 log n_r2 ; n_r2 log n_r1)
+    double variance1U2 = variance(mergedRegion);//= (t / (n + n_p) - pow(s / (n_p + n), 2)); // / (n + n_p)
+    double perimeter1U2 =
+            perimeter1 + perimeter2 - intersectionPerimeter(region1, region2); // min(n_r1 log n_r2 ; n_r2 log n_r1)
     double lambda = (variance1 + variance2 - variance1U2) / (perimeter1U2 - perimeter1 - perimeter2);
 
     return lambda;
@@ -268,8 +269,8 @@ void displayRegions(const Mat &input, vector<Region> regions, vector<vector<int>
 
     // show merged regions image
     Mat resized_output;
-    resize(output, resized_output, Size(), 100.0, 100.0, CV_INTER_NN);
-    namedWindow("Merged regions" ,  WINDOW_AUTOSIZE);
+    resize(output, resized_output, Size(), 100.0, 100.0);
+    namedWindow("Merged regions", WINDOW_AUTOSIZE);
     imshow("Merged regions", resized_output);
 }
 
@@ -287,7 +288,7 @@ void scaleSets(const Mat &input)
     channels.push_back(tmp[1]);
     channels.push_back(tmp[2]);//*/
     int imageSize = input.rows * input.cols;
-    std::map<std::pair<int,int>, double> lambdaMatrix;
+    std::map<std::pair<int, int>, double> lambdaMatrix;
 
     // create a region for each pixel
     for (int i = 0; i < input.rows; ++i)
@@ -305,8 +306,8 @@ void scaleSets(const Mat &input)
             };
 
             //for (int k = 0; k < 3; ++k) {
-                r.t += pow(input.at<float>(i, j), 2);
-                r.s += input.at<float>(i, j);
+            r.t += pow(input.at<float>(i, j), 2);
+            r.s += input.at<float>(i, j);
             //}
             //r.t /= 3;
             //r.s /= 3;
@@ -321,8 +322,8 @@ void scaleSets(const Mat &input)
         for (int neighborIdx: regions[regionId].adjacentRegions)
         {
             double lambda = optimalLambda(regions[regionId], regions[neighborIdx], input);
-            lambdaMatrix.emplace(pair<int,int>(regionId,neighborIdx), lambda);
-            lambdaMatrix.emplace(pair<int,int>(neighborIdx, regionId), lambda);
+            lambdaMatrix.emplace(pair<int, int>(regionId, neighborIdx), lambda);
+            lambdaMatrix.emplace(pair<int, int>(neighborIdx, regionId), lambda);
         }
     }
 
@@ -357,7 +358,7 @@ void scaleSets(const Mat &input)
                 // we use the fact that the activeRegions is sorted
                 if (neighborIdx > regionId)
                 {
-                    double lambda = lambdaMatrix.at(pair<int,int>(regionId,neighborIdx));
+                    double lambda = lambdaMatrix.at(pair<int, int>(regionId, neighborIdx));
                     if (lambda < lambdaMin)
                     {
                         lambdaMin = lambda;
@@ -384,10 +385,10 @@ void scaleSets(const Mat &input)
         int newRegionId = r1.id;
         // r2 is merged into r1, only r1 remains
         regions[newRegionId] = merge(r1, r2, regionIds);
-        for (int neighborId : r2.adjacentRegions)
+        for (int neighborId: r2.adjacentRegions)
         {
-            lambdaMatrix.erase(pair<int,int>(r2.id, neighborId));
-            lambdaMatrix.erase(pair<int,int>(neighborId, r2.id));
+            lambdaMatrix.erase(pair<int, int>(r2.id, neighborId));
+            lambdaMatrix.erase(pair<int, int>(neighborId, r2.id));
         }
 
         timeAfterRemove = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
@@ -397,8 +398,8 @@ void scaleSets(const Mat &input)
         for (int neighborId: regions[newRegionId].adjacentRegions)
         {
             double lambda = optimalLambda(regions[newRegionId], regions[neighborId], input);
-            lambdaMatrix.emplace(pair<int,int>(newRegionId, neighborId), lambda);
-            lambdaMatrix.emplace(pair<int,int>(neighborId, newRegionId), lambda);
+            lambdaMatrix.emplace(pair<int, int>(newRegionId, neighborId), lambda);
+            lambdaMatrix.emplace(pair<int, int>(neighborId, newRegionId), lambda);
             // check if neighborId is also a neighbor of r2
             // TODO : avoid this update
             if (regions[neighborId].adjacentRegions.count(r2.id) != 0)
@@ -420,7 +421,8 @@ void scaleSets(const Mat &input)
         totalTimeUpdate += (timeAfterEverything - timeAfterActiveRegionsPassed);
         //cout << "duration of loop : " << (timeAfterActiveRegionsPassed - timeAtLoopStart) << " duration of the rest : "
         //     << (timeAfterEverything - timeAfterActiveRegionsPassed) << endl;
-        if (count % 100 == 0) {
+        if (count % 100 == 0)
+        {
             cout << count
                  << " total : " << totalItTime
                  << " loop : " << totalTimeLoop
@@ -450,13 +452,13 @@ int main(int argc, char **argv)
     }
 
     Mat input = imread(argv[1], IMREAD_COLOR);
-    cv::cvtColor( input, input, COLOR_BGR2GRAY );
+    cv::cvtColor(input, input, COLOR_BGR2GRAY);
     input.convertTo(input, CV_32FC1, 1.0 / 255.0); // convert image to float type
 
     scaleSets(input);
 
     namedWindow("Original", WINDOW_AUTOSIZE);
-    resize(input, input, Size(), 100.0, 100.0, CV_INTER_NN);
+    resize(input, input, Size(), 100.0, 100.0);
     imshow("Original", input);
 
     Mat output;
