@@ -7,6 +7,10 @@
 #include <chrono>
 #include <opencv2/imgproc.hpp>
 #include <map>
+#include <queue>
+
+#define MULT_X 100
+#define MULT_Y 100
 
 using namespace std;
 using namespace cv;
@@ -17,6 +21,34 @@ using std::chrono::system_clock;
 
 using Pixel = pair<int, int>;
 
+struct Elt
+{
+    int rank;
+    int root;
+};
+
+int find_(map<int,Elt>& set, int value)
+{
+    if (set[value].root == value)
+    {
+        return value;
+    }
+
+    set[value].root = find_(set, set[value].root);
+    return set[value].root;
+}
+
+void union_(map<int,Elt>& thingy, int v1,  int v2)
+{
+    int tv1 = find_(thingy, v1);
+    int tv2 = find_(thingy, v2);
+
+    auto it1 = thingy.find(tv1);
+    auto it2 = thingy.find(tv2);
+
+    it2->second.root = it1->second.root;
+}
+
 struct Region
 {
     int id{-1};
@@ -26,7 +58,27 @@ struct Region
     int perimeter{0};
     double s{0.};
     double t{0.};
+    bool operator<(const Region& other) const;
 };
+
+bool Region::operator<(const Region& other) const
+{
+    return this->id < other.id;
+}
+
+struct MergeCandidate
+{
+    int r1;
+    int r2;
+    double lambda;
+    int perimeter1;
+    int perimeter2;
+    bool operator<(const MergeCandidate& other) const;
+};
+
+bool MergeCandidate::operator<(const MergeCandidate& other) const {
+    return this->lambda > other.lambda;
+}
 
 double mean(const Mat &image, Region &region)
 {
@@ -47,22 +99,22 @@ double mean(const Mat &image, Region &region)
 double variance(Region &region)
 {
     double n = region.size;
-    return (region.t / n) - pow(region.s / n, 2);
+    return (region.t) - pow(region.s, 2) / (n * n);
 }
 
-double variance(const Mat &im, Region &region)
-{
-    double variances;
-
-    // variance for each channels
-    double sum = 0.;
-    double meanChannel = mean(im, region);
-    for (Pixel pixel: region.pixels) // n_r
-        sum += pow(((double) im.at<float>(pixel.first, pixel.second)) - meanChannel, 2);
-    variances = sum / (double) region.pixels.size();
-
-    return variances;
-}
+//double variance(const Mat &im, Region &region)
+//{
+//    double variances;
+//
+//    // variance for each channels
+//    double sum = 0.;
+//    double meanChannel = mean(im, region);
+//    for (Pixel pixel: region.pixels) // n_r
+//        sum += pow(((double) im.at<float>(pixel.first, pixel.second)) - meanChannel, 2);
+//    variances = sum / (double) region.pixels.size();
+//
+//    return variances ;
+//}
 
 /**
  * Return the von neumann neighborhood of the pixel passed in parameters.
@@ -155,35 +207,23 @@ int intersectionPerimeter(const Region &region1, const Region &region2)
  * @param regionIds region ids correspondence matrix, is modified after execution
  * @return new region ids matrix
  */
-Region merge(const Region &region1, Region region2, vector<vector<int>> &regionIds)
+Region merge(const Region &region1, Region& region2, map<int, Elt>& correspondances)
 {
     // merge region2 into region1
     Region mergedRegion = region1;
     mergedRegion.pixels.merge(region2.pixels); // merge pixels
     mergedRegion.adjacentRegions.merge(region2.adjacentRegions); // add new adjacent regions
-    mergedRegion.adjacentRegions.erase(
-            find(mergedRegion.adjacentRegions.begin(), mergedRegion.adjacentRegions.end(), region2.id));
-    mergedRegion.adjacentRegions.erase(
-            find(mergedRegion.adjacentRegions.begin(), mergedRegion.adjacentRegions.end(), region1.id));
+    //mergedRegion.adjacentRegions.erase(
+    //        find(mergedRegion.adjacentRegions.begin(), mergedRegion.adjacentRegions.end(), region2.id));
+    //mergedRegion.adjacentRegions.erase(
+    //        find(mergedRegion.adjacentRegions.begin(), mergedRegion.adjacentRegions.end(), region1.id));
 
     mergedRegion.perimeter = region2.perimeter + region1.perimeter + intersectionPerimeter(region1, region2);
-
-    int n = region1.size;
-    int n_p = region2.size;
 
     mergedRegion.size = region1.size + region2.size;
 
     mergedRegion.t = (region1.t + region2.t);
-    //mergedRegion.t = (n * region1.t + n_p * region2.t) / mergedRegion.size;
-    mergedRegion.s = (region1.s + region2.s); // / mergedRegion.size
-    //mergedRegion.s = (n * region1.s + n_p * region2.s) / mergedRegion.size; // / mergedRegion.size
-
-
-    // switch region ids to region1's for pixels which were in region2
-    for (auto &regionId: regionIds)
-        for (int &id: regionId)
-            if (id == region2.id)
-                id = region1.id;
+    mergedRegion.s = (region1.s + region2.s);
 
     return mergedRegion;
 }
@@ -199,30 +239,23 @@ Region merge(const Region &region1, Region region2, vector<vector<int>> &regionI
  */
 double optimalLambda(Region &region1, Region &region2, const Mat &im)
 {
-    double tmp1 = variance(im, region1), tmp2 = variance(region1);
-    assert(tmp1 == tmp2);
-    double tmp3 = variance(im, region2), tmp4 = variance(region2);
-    assert(tmp3 == tmp4);
-    double variance1 = variance(im, region1);
-    double variance2 = variance(im, region2);
+    double variance1 = variance(region1);
+    double variance2 = variance(region2);
 
     double perimeter1 = region1.perimeter;
     double perimeter2 = region2.perimeter;
 
     // merge region2 into region1
-    Region mergedRegion = region1; // n_r1
-    set<Pixel> region2Pixels = region2.pixels; // n_r2
-    mergedRegion.pixels.merge(region2Pixels); // n_r1 * log (n_r1 + n_r2)
+    Region mergedRegion = region1;
+    set<Pixel> region2Pixels = region2.pixels;
+    mergedRegion.pixels.merge(region2Pixels);
 
     // merged region lambda
-    double n = region1.size;
-    double n_p = region2.size;
-    mergedRegion.t = (region1.t + region2.t);
-    mergedRegion.s = (region1.s + region2.s);
-    mergedRegion.size = n + n_p;
-    double variance1U2 = variance(mergedRegion);//= (t / (n + n_p) - pow(s / (n_p + n), 2)); // / (n + n_p)
-    double perimeter1U2 =
-            perimeter1 + perimeter2 - intersectionPerimeter(region1, region2); // min(n_r1 log n_r2 ; n_r2 log n_r1)
+    mergedRegion.t = region1.t + region2.t;
+    mergedRegion.s = region1.s + region2.s;
+    mergedRegion.size = region1.size + region2.size;
+    double variance1U2 = variance(mergedRegion);
+    double perimeter1U2 = perimeter1 + perimeter2 - intersectionPerimeter(region1, region2);
     double lambda = (variance1 + variance2 - variance1U2) / (perimeter1U2 - perimeter1 - perimeter2);
 
     return lambda;
@@ -235,65 +268,55 @@ double optimalLambda(Region &region1, Region &region2, const Mat &im)
  * @param regions regions of the image
  * @param regionIds correspondence table between pixels and regions
  */
-void displayRegions(const Mat &input, vector<Region> regions, vector<vector<int>> regionIds)
+void displayRegions(const Mat &input, map<int, Region> regions, map<int,Elt>& union_find_set)
 {
     Mat output;
     input.copyTo(output);
 
-    vector<int> encounteredRegions;
-    vector<Vec3f> encounteredRegionsColors;
+    map<int, Vec3f> encounteredRegions;
 
     // coloring regions in output with a new random color for each region
+    auto itR1 = union_find_set.begin();
     for (int i = 0; i < input.rows; ++i)
-        for (int j = 0; j < input.cols; ++j)
-        {
-            int regionId = regions[regionIds[i][j]].id;
-            auto it = find(encounteredRegions.begin(), encounteredRegions.end(), regionId);
+        for (int j = 0; j < input.cols; ++j) {
+            int regionId = regions[find_(union_find_set, itR1->first)].id;
+            auto it = encounteredRegions.find(regionId);
 
             // create a new color if region has not been yet encountered
             if (it == encounteredRegions.end())
-            {
-                encounteredRegions.push_back(regionId);
-                encounteredRegionsColors.emplace_back(
-                        (rand() % 255) / 255.f,
-                        (rand() % 255) / 255.f,
-                        (rand() % 255) / 255.f
+                encounteredRegions.emplace(regionId,
+                                           Vec3f(
+                                                   (rand() % 255) / 255.f,
+                                                   (rand() % 255) / 255.f,
+                                                   (rand() % 255) / 255.f
+                                           )
                 );
-            }
 
             // paint output with corresponding color
-            it = find(encounteredRegions.begin(), encounteredRegions.end(), regionId);
-            int regionIndex = (int) distance(encounteredRegions.begin(), it);
-            output.at<float>(i, j) = encounteredRegionsColors[regionIndex][0];
+            it = encounteredRegions.find(regionId);
+            int regionIndex = it->first;
+            output.at<Vec3f>(i, j) = encounteredRegions[regionIndex];
+            itR1++;
         }
 
     // show merged regions image
     Mat resized_output;
-    resize(output, resized_output, Size(), 100.0, 100.0);
-    namedWindow("Merged regions", WINDOW_AUTOSIZE);
+    resize(output, resized_output, Size(), MULT_X, MULT_Y, CV_INTER_NN);
+    namedWindow("Merged regions" ,  WINDOW_AUTOSIZE);
     imshow("Merged regions", resized_output);
 }
 
 void scaleSets(const Mat &input)
 {
-    vector<Region> regions; // array of regions
-    vector<int> activeRegions; // array of regions present in image
-    vector<vector<int>> regionIds; // TODO use a fixed size array instead of a vector
+    map<int, Region> regions; // array of regions
+    set<int> activeRegions; // array of regions still present in image
+    map<int, Elt> union_find_set;
 
-    // split input image into 3 channels
-    /*Mat tmp[3];
-    split(input, tmp);
-    vector<Mat> channels;
-    channels.push_back(tmp[0]);
-    channels.push_back(tmp[1]);
-    channels.push_back(tmp[2]);//*/
     int imageSize = input.rows * input.cols;
-    std::map<std::pair<int, int>, double> lambdaMatrix;
+    priority_queue<MergeCandidate> priorityQueue;
 
     // create a region for each pixel
     for (int i = 0; i < input.rows; ++i)
-    {
-        regionIds.emplace_back();
         for (int j = 0; j < input.cols; ++j)
         {
             int id = i * input.cols + j;
@@ -305,110 +328,120 @@ void scaleSets(const Mat &input)
                     4
             };
 
-            //for (int k = 0; k < 3; ++k) {
-            r.t += pow(input.at<float>(i, j), 2);
-            r.s += input.at<float>(i, j);
-            //}
-            //r.t /= 3;
-            //r.s /= 3;
-            regions.emplace_back(r);
-            regionIds[i].push_back(id);
-            activeRegions.push_back(id);
+            Vec3f pixel = input.at<Vec3f>(i, j);
+            for (int k = 0; k < 3; ++k) {
+                r.t += pow(pixel[k], 2);
+                r.s += pixel[k];
+            }
+            r.t /= 3;
+            r.s /= 3;
+            regions.emplace(r.id, r);
+            activeRegions.emplace(id);
+            union_find_set[id] = Elt{1, id};
         }
-    }
 
+    // initial lambda calculation for every region and their neighbors
     for (int regionId: activeRegions)
-    {
         for (int neighborIdx: regions[regionId].adjacentRegions)
         {
             double lambda = optimalLambda(regions[regionId], regions[neighborIdx], input);
-            lambdaMatrix.emplace(pair<int, int>(regionId, neighborIdx), lambda);
-            lambdaMatrix.emplace(pair<int, int>(neighborIdx, regionId), lambda);
+            priorityQueue.emplace(MergeCandidate{
+                regionId,
+                neighborIdx,
+                lambda,
+                4,
+                4
+            });
         }
-    }
 
 
-    int nbCount = 12;
-    int count = nbCount;
     time_t timeAtLoopStart, timeAfterActiveRegionsPassed, timeAfterRemove, timeAfterEverything, totalItTime = 0, totalTimeLoop = 0, totalTimeRemove = 0, totalTimeUpdate = 0;
     double totalNeighbors = 0;
-    while (activeRegions.size() > 1 && count != 0)
+
+    double lmin_pred = -1, lmin;
+
+    int count = 3000;
+
+    while (activeRegions.size() > 1 && count != 0 )
     {
         timeAtLoopStart = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 
         Region r1, r2;
-        double lambdaMin = 100000000.;
         // TODO : handle 'active' regions and optimise code (obj don't calculate the same distance twice)
         vector<int> doneRegions;
 
-        // find minimal lambda and the merge region associated with it
-        // loop through all present regions
-        // N - x
-        for (int regionId: activeRegions)
+        bool validMerge = false;
+        while (!validMerge && !priorityQueue.empty())
         {
-            // ~4
-            for (int neighborIdx: regions[regionId].adjacentRegions)
+            // 2 log n
+            int r1Id = priorityQueue.top().r1;
+            int r2Id = priorityQueue.top().r2;
+            int p1 = priorityQueue.top().perimeter1;
+            int p2 = priorityQueue.top().perimeter2;
+
+            lmin = priorityQueue.top().lambda;
+
+            r1Id = find_(union_find_set, r1Id);
+            r2Id = find_(union_find_set, r2Id);
+
+            priorityQueue.pop();
+
+            if (r1Id != r2Id)
             {
-                //int tmp = neighborIdx % input.rows;
-                //int tmp2 = (neighborIdx-tmp) / input.rows;
-                //int trueNI = regionIds.at(tmp2).at(tmp);
-                // neighbor is not in doneRegions
-                // TODO : update indexs (problem : if neighbor isn't active anymore)
-                // x
-                // we use the fact that the activeRegions is sorted
-                if (neighborIdx > regionId)
-                {
-                    double lambda = lambdaMatrix.at(pair<int, int>(regionId, neighborIdx));
-                    if (lambda < lambdaMin)
-                    {
-                        lambdaMin = lambda;
-                        r1 = regions[regionId];
-                        r2 = regions[neighborIdx];
-                    }
-                }
+                r1 = regions[r1Id];
+                r2 = regions[r2Id];
+
+                // 2 log n
+                validMerge = (r1.perimeter == p1 && r2.perimeter == p2) &&
+                         (activeRegions.find(r1.id) != activeRegions.end() &&
+                          activeRegions.find(r2.id) != activeRegions.end());
             }
-            doneRegions.push_back(regionId);
+            else
+            {
+                validMerge = false;
+            }
         }
         timeAfterActiveRegionsPassed = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 
-        /*cout << "=========== " << "merge" << " ===========" << endl;
-        cout << "t: " << r1.t << " s: " << r1.s << endl;
-        for (auto pix : r1.pixels)
-            cout << pix.first << " " << pix.second << " : ";
-        cout << endl;
-        cout << "t: " << r2.t << " s: " << r2.s << endl;
-        for (auto pix : r2.pixels)
-            cout << pix.first << " " << pix.second << " : ";
-        cout << endl;
-        cout << "lmin: " << lambdaMin << endl;*/
-
         int newRegionId = r1.id;
         // r2 is merged into r1, only r1 remains
-        regions[newRegionId] = merge(r1, r2, regionIds);
-        for (int neighborId: r2.adjacentRegions)
-        {
-            lambdaMatrix.erase(pair<int, int>(r2.id, neighborId));
-            lambdaMatrix.erase(pair<int, int>(neighborId, r2.id));
-        }
+        regions[newRegionId] = merge(r1, r2, union_find_set);
+
+        union_(union_find_set, r1.id, r2.id);
 
         timeAfterRemove = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 
         // update neighbors of merged region :
         // delete r2 and add r1 in the neighbors list of merged region neighbors
+        set<int> neighborsIds;
+        Region newR = regions[newRegionId];
         for (int neighborId: regions[newRegionId].adjacentRegions)
         {
-            double lambda = optimalLambda(regions[newRegionId], regions[neighborId], input);
-            lambdaMatrix.emplace(pair<int, int>(newRegionId, neighborId), lambda);
-            lambdaMatrix.emplace(pair<int, int>(neighborId, newRegionId), lambda);
-            // check if neighborId is also a neighbor of r2
+            int tNeigId = find_(union_find_set, neighborId);
+            if (tNeigId != r2.id && tNeigId != newRegionId && neighborsIds.find(tNeigId) == neighborsIds.end())
+            {
+                double lambda = optimalLambda(newR, regions[tNeigId], input);
+                priorityQueue.push(MergeCandidate{
+                        newRegionId,
+                        tNeigId,
+                        lambda,
+                        newR.perimeter,
+                        regions[tNeigId].perimeter
+                });
+                neighborsIds.insert(tNeigId);
+            }
             // TODO : avoid this update
-            if (regions[neighborId].adjacentRegions.count(r2.id) != 0)
+            // tells all of the neighbors of newR that newR is r2
+            // the idea is instead of replacing to just have a register telling the union_find_set between regions
+            // so each time we ref the id of a region we need to use find
+            /*if (regions[neighborId].adjacentRegions.count(r2.id) != 0)
             {
                 regions[neighborId].adjacentRegions.erase(r2.id);
                 if (regions[neighborId].adjacentRegions.count(newRegionId) == 0)
                     regions[neighborId].adjacentRegions.insert(newRegionId);
-            }
+            }//*/
         }
+        regions[newRegionId].adjacentRegions = neighborsIds;
         totalNeighbors += regions[newRegionId].adjacentRegions.size();
 
         activeRegions.erase(find(activeRegions.begin(), activeRegions.end(), r2.id));
@@ -419,17 +452,15 @@ void scaleSets(const Mat &input)
         totalTimeLoop += (timeAfterActiveRegionsPassed - timeAtLoopStart);
         totalTimeRemove += (timeAfterRemove - timeAfterActiveRegionsPassed);
         totalTimeUpdate += (timeAfterEverything - timeAfterActiveRegionsPassed);
-        //cout << "duration of loop : " << (timeAfterActiveRegionsPassed - timeAtLoopStart) << " duration of the rest : "
-        //     << (timeAfterEverything - timeAfterActiveRegionsPassed) << endl;
-        if (count % 100 == 0)
-        {
+
+        if (count % 100 == 0) {
             cout << count
                  << " total : " << totalItTime
                  << " loop : " << totalTimeLoop
                  << " remove : " << totalTimeRemove
                  << " rest : " << totalTimeUpdate
                  << " neighbors : " << totalNeighbors
-                 << " lambda size : " << lambdaMatrix.size() << endl;
+                 << " lambda size : " << priorityQueue.size() << endl;
             totalItTime = 0;
             totalTimeLoop = 0;
             totalTimeUpdate = 0;
@@ -437,10 +468,15 @@ void scaleSets(const Mat &input)
             totalTimeRemove = 0;
         }
 
+        //if (lmin_pred != -1)
+            //assert(lmin >= lmin_pred);
+        lmin_pred = lmin;
+
         count--;
     }
 
-    displayRegions(input, regions, regionIds);
+
+    displayRegions(input, regions, union_find_set);
 }
 
 int main(int argc, char **argv)
@@ -452,18 +488,19 @@ int main(int argc, char **argv)
     }
 
     Mat input = imread(argv[1], IMREAD_COLOR);
-    cv::cvtColor(input, input, COLOR_BGR2GRAY);
-    input.convertTo(input, CV_32FC1, 1.0 / 255.0); // convert image to float type
+    //cv::cvtColor( input, input, COLOR_BGR2GRAY );
+    //input.convertTo(input, CV_32FC1, 1.0 / 255.0); // convert image to float types
 
     scaleSets(input);
 
     namedWindow("Original", WINDOW_AUTOSIZE);
-    resize(input, input, Size(), 100.0, 100.0);
+    resize(input, input, Size(), MULT_X, MULT_Y, CV_INTER_NN);
     imshow("Original", input);
 
     Mat output;
     input.copyTo(output);
 
+    // wait for exit key
     while (true)
     {
         int keycode = waitKey(50);
