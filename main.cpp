@@ -9,8 +9,8 @@
 #include <map>
 #include <queue>
 
-#define MULT_X 100
-#define MULT_Y 100
+#define MULT_X 1
+#define MULT_Y 1
 
 using namespace std;
 using namespace cv;
@@ -256,7 +256,7 @@ double optimalLambda(Region &region1, Region &region2, const Mat &im)
     mergedRegion.size = region1.size + region2.size;
     double variance1U2 = variance(mergedRegion);
     double perimeter1U2 = perimeter1 + perimeter2 - intersectionPerimeter(region1, region2);
-    double lambda = (variance1 + variance2 - variance1U2) / (perimeter1U2 - perimeter1 - perimeter2);
+    double lambda = (variance1U2 - variance1 - variance2) / (perimeter1 + perimeter2 - perimeter1U2);
 
     return lambda;
 }
@@ -273,36 +273,49 @@ void displayRegions(const Mat &input, map<int, Region> regions, map<int,Elt>& un
     Mat output;
     input.copyTo(output);
 
-    map<int, Vec3f> encounteredRegions;
+    map<int, vector<float>> encounteredRegions;
 
     // coloring regions in output with a new random color for each region
-    auto itR1 = union_find_set.begin();
+    auto itPixel = union_find_set.begin();
     for (int i = 0; i < input.rows; ++i)
-        for (int j = 0; j < input.cols; ++j) {
-            int regionId = regions[find_(union_find_set, itR1->first)].id;
+        for (int j = 0; j < input.cols; ++j)
+        {
+            int regionId = regions[find_(union_find_set, itPixel->first)].id;
+
             auto it = encounteredRegions.find(regionId);
 
             // create a new color if region has not been yet encountered
             if (it == encounteredRegions.end())
-                encounteredRegions.emplace(regionId,
-                                           Vec3f(
-                                                   (rand() % 255) / 255.f,
-                                                   (rand() % 255) / 255.f,
-                                                   (rand() % 255) / 255.f
-                                           )
+            {
+                auto res = encounteredRegions.emplace(
+                        regionId,
+                        vector{
+                                rand() % 255 / 255.f,
+                                rand() % 255 / 255.f,
+                                rand() % 255 / 255.f
+                        }
                 );
+                if (!res.second)
+                {
+                    cout << "warning! failed to emplace" << endl;
+                    exit(1);
+                }
+                it = res.first;
+            }
 
             // paint output with corresponding color
-            it = encounteredRegions.find(regionId);
-            int regionIndex = it->first;
-            output.at<Vec3f>(i, j) = encounteredRegions[regionIndex];
-            itR1++;
+            output.at<Vec3f>(i, j) = Vec3f{it->second.at(0), it->second.at(1), it->second.at(2)};
+            //cout << output.at<Vec3f>(i, j)[0] << " " << output.at<Vec3f>(i, j)[1] << " " << output.at<Vec3f>(i, j)[2] << endl;
+
+            //cout << output.at<Vec3f>(i, j)[0] << " " << output.at<Vec3f>(i, j)[1] << " " << output.at<Vec3f>(i, j)[2] << endl;
+            if (itPixel != union_find_set.end())
+                itPixel++;
         }
 
     // show merged regions image
     Mat resized_output;
     resize(output, resized_output, Size(), MULT_X, MULT_Y, CV_INTER_NN);
-    namedWindow("Merged regions" ,  WINDOW_AUTOSIZE);
+    namedWindow("Merged regions",  WINDOW_AUTOSIZE);
     imshow("Merged regions", resized_output);
 }
 
@@ -329,12 +342,15 @@ void scaleSets(const Mat &input)
             };
 
             Vec3f pixel = input.at<Vec3f>(i, j);
-            for (int k = 0; k < 3; ++k) {
-                r.t += pow(pixel[k], 2);
-                r.s += pixel[k];
+            double energies[3];
+            for (int k = 0; k < 3; ++k)
+            {
+                energies[k] = pow(pixel[k], 2) - pow(pixel[k], 2);
             }
-            r.t /= 3;
-            r.s /= 3;
+            //r.t += pow(pixel[k], 2);
+            //r.s += pixel[k];
+            r.t = 0;
+            r.s = 0;
             regions.emplace(r.id, r);
             activeRegions.emplace(id);
             union_find_set[id] = Elt{1, id};
@@ -360,7 +376,7 @@ void scaleSets(const Mat &input)
 
     double lmin_pred = -1, lmin;
 
-    int count = 3000;
+    int count = 13;
 
     while (activeRegions.size() > 1 && count != 0 )
     {
@@ -475,7 +491,6 @@ void scaleSets(const Mat &input)
         count--;
     }
 
-
     displayRegions(input, regions, union_find_set);
 }
 
@@ -488,13 +503,14 @@ int main(int argc, char **argv)
     }
 
     Mat input = imread(argv[1], IMREAD_COLOR);
+    input.convertTo(input, CV_32FC3); // convert image to float types
     //cv::cvtColor( input, input, COLOR_BGR2GRAY );
-    //input.convertTo(input, CV_32FC1, 1.0 / 255.0); // convert image to float types
 
-    scaleSets(input);
+    //scaleSets(input);
 
     namedWindow("Original", WINDOW_AUTOSIZE);
-    resize(input, input, Size(), MULT_X, MULT_Y, CV_INTER_NN);
+    Mat dest;
+    //resize(input, dest, Size(), MULT_X, MULT_Y, CV_INTER_NN);
     imshow("Original", input);
 
     Mat output;
