@@ -8,6 +8,7 @@
 #include <opencv2/imgproc.hpp>
 #include <map>
 #include <queue>
+#include <argparse/argparse.hpp>
 
 using namespace std;
 using namespace cv;
@@ -114,7 +115,7 @@ double variance(const Region &region)
     double sum = 0;
     for (int channel = 0; channel < COLOR_DIM; channel++)
     {
-        double channelVariance = region.eSquares[channel] - pow(region.ePixels[channel], 2) / (n * n);
+        double channelVariance = 1 / n * (region.eSquares[channel] - pow(region.ePixels[channel], 2) / n);
         sum += abs(channelVariance);
     }
     return sum;
@@ -264,8 +265,10 @@ double optimalLambda(const Region &region1, const Region &region2)
 
     // merged region lambda
     double variance1U2 = variance(mergedRegion);
-    double perimeter1U2 = perimeter1 + perimeter2 - intersectionPerimeter(region1, region2);
-    return (variance1U2 - variance1 - variance2) / (perimeter1 + perimeter2 - perimeter1U2);
+    double perimeter1U2 = perimeter1 + perimeter2 - intersectionPerimeter(region1, region2) * 2;
+    double lambda = (variance1U2 - variance1 - variance2) / (perimeter1 + perimeter2 - perimeter1U2);
+
+    return lambda;
 }
 
 /**
@@ -315,7 +318,7 @@ void displayRegions(const Mat &input, map<int, Region> regions, map<int, Elt> &u
     imshow("Output", output);
 }
 
-void scaleSets(const Mat &input)
+void scaleSets(const Mat &input, int budget)
 {
     map<int, Region> regions; // array of regions
     set<int> activeRegions; // array of regions still present in image
@@ -369,8 +372,8 @@ void scaleSets(const Mat &input)
             totalItTime = 0, totalTimeLoop = 0, totalTimeRemove = 0, totalTimeUpdate = 0;
 
     double totalNeighbors = 0;
-    double lmin_pred = -1, lmin;
-    int count = 20;
+    double lastLambda = -1;
+    int count = budget;
 
     while (activeRegions.size() > 1 && count != 0)
     {
@@ -388,7 +391,7 @@ void scaleSets(const Mat &input)
             int p1 = priorityQueue.top().perimeter1;
             int p2 = priorityQueue.top().perimeter2;
 
-            lmin = priorityQueue.top().lambda;
+            lastLambda = priorityQueue.top().lambda;
 
             r1Id = find_(union_find_set, r1Id);
             r2Id = find_(union_find_set, r2Id);
@@ -412,11 +415,9 @@ void scaleSets(const Mat &input)
         }
         timeAfterActiveRegionsPassed = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 
-        int newRegionId = r1.id;
-
         // r2 is merged into r1, only r1 remains
+        int newRegionId = r1.id;
         regions[newRegionId] = merge(r1, r2);
-
         union_(union_find_set, r1.id, r2.id);
 
         timeAfterRemove = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
@@ -440,21 +441,11 @@ void scaleSets(const Mat &input)
                 });
                 neighborsIds.insert(tNeigId);
             }
-            // TODO : avoid this update
-            // tells all of the neighbors of newR that newR is r2
-            // the idea is instead of replacing to just have a register telling the union_find_set between regions
-            // so each time we ref the id of a region we need to use find
-            /*if (regions[neighborId].adjacentRegions.count(r2.id) != 0)
-            {
-                regions[neighborId].adjacentRegions.erase(r2.id);
-                if (regions[neighborId].adjacentRegions.count(newRegionId) == 0)
-                    regions[neighborId].adjacentRegions.insert(newRegionId);
-            }//*/
         }
         regions[newRegionId].adjacentRegions = neighborsIds;
         totalNeighbors += regions[newRegionId].adjacentRegions.size();
 
-        activeRegions.erase(find(activeRegions.begin(), activeRegions.end(), r2.id));
+        activeRegions.erase(activeRegions.find(r2.id));
 
         timeAfterEverything = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
         totalItTime += (timeAfterEverything - timeAtLoopStart);
@@ -477,8 +468,6 @@ void scaleSets(const Mat &input)
             totalTimeRemove = 0;
         }
 
-        lmin_pred = lmin;
-
         count--;
     }
 
@@ -498,19 +487,39 @@ void waitExit()
 
 int main(int argc, char **argv)
 {
-    if (argc != 2)
+    // handling arguments
+
+    argparse::ArgumentParser program("scale set");
+    program.add_description("Scale set segmentation algorithm");
+    program.add_argument("image")
+            .help("path to input image");
+    program.add_argument("budget")
+            .help("number of maximum merge allowed by user")
+            .scan<'i', int>();
+
+    try
     {
-        cout << "Usage: " << argv[0] << " <path_to_image>" << endl;
-        return -1;
+        program.parse_args(argc, argv);
+    }
+    catch (const std::runtime_error &err)
+    {
+        std::cerr << err.what() << std::endl;
+        std::cerr << program;
+        std::exit(1);
     }
 
-    Mat input = imread(argv[1], IMREAD_COLOR);
+    auto imagePath = program.get<string>("image");
+    auto budget = program.get<int>("budget");
+
+    // program execution
+
+    Mat input = imread(imagePath, IMREAD_COLOR);
     input.convertTo(input, CV_32FC3, 1 / 255.); // convert image to float types
+
+    scaleSets(input, budget);
 
     namedWindow("Input", WINDOW_AUTOSIZE);
     imshow("Input", input);
-
-    scaleSets(input);
 
     waitExit();
 
