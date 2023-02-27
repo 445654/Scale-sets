@@ -51,3 +51,12 @@ Regions are stored in a disjoint set, which allows to keep track of the parent o
 while searching for them in a reasonable amount of time.
 
 The complexity of the algorithm is complicated to find but annotations can be found in the code.
+
+## Example
+
+Here is a working example for our algorithm :
+
+![ExampleInput](./examples/ExampleInput.png)
+
+![ExampleOutput](./examples/ExampleOutput.png)
+
