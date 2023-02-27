@@ -27,16 +27,14 @@ Optional arguments:
 ```
 
 ```bash
-./scale-sets example.jpg 0.5
+./scale-sets example.jpg 500
 ```
 
 ## Algorithm
 
 The scale-sets representation consists of segmenting the image into a set of regions,
-which is a combination of smaller regions that depend on a lambda factor input by the user.  
-The lambda factor is a scale indicating the rate of regions that will be combined into a larger region.  
-A lambda factor of 1 will result in the original image (with every pixel being a region),
-while a lambda factor of 0 will result in a single region.
+which is a combination of smaller regions that depend on budget set by the user.  
+The number of merges is determined by this budget.
 
 The combination of two regions is determined by comparing their energies.  
 A region will merge with another region if the resulting energy is lower than the one of any other possible
@@ -44,9 +42,12 @@ combination.
 Here, the energy of a region is its variance, plus its perimeter multiplied by the lambda factor.
 
 The algorithm starts by creating a region for each pixel in the image.  
-Then, it iterates over all the regions to merge them with the constraint describe above, for the desired lambda.
+Then, it iterates over all the regions to merge them with the constraint describe above.
 
 The possible merges are stored in a priority queue, which is sorted by the energy of the resulting region.  
 The merges are done in order of this priority queue, starting with the merge which has the lowest energy.
 
-Regions are stored in a disjoint set, which allows to keep track of the parent of each region.
+Regions are stored in a disjoint set, which allows to keep track of the parent of each region,
+while searching for them in a reasonable amount of time.
+
+The complexity of the algorithm is complicated to find but annotations can be found in the code.

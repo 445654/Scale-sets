@@ -224,12 +224,6 @@ Region merge(const Region &region1, Region &region2)
     mergedRegion.pixels.merge(region2.pixels); // merge pixels
     mergedRegion.adjacentRegions.merge(region2.adjacentRegions); // add new adjacent regions
 
-    // erasing neighbors pointing at the regions which has been merged
-//    mergedRegion.adjacentRegions.erase(
-//            find(mergedRegion.adjacentRegions.begin(), mergedRegion.adjacentRegions.end(), region2.id));
-//    mergedRegion.adjacentRegions.erase(
-//            find(mergedRegion.adjacentRegions.begin(), mergedRegion.adjacentRegions.end(), region1.id));
-
     mergedRegion.perimeter = region2.perimeter + region1.perimeter - intersectionPerimeter(region1, region2) * 2;
     mergedRegion.size = region1.size + region2.size;
 
@@ -256,9 +250,7 @@ double optimalLambda(const Region &region1, const Region &region2)
     double perimeter2 = region2.perimeter;
 
     // simulate merging region2 into region1
-    Region mergedRegion = region1;
-    set<Pixel> region2Pixels = region2.pixels;
-    mergedRegion.pixels.merge(region2Pixels);
+    Region mergedRegion;
     mergedRegion.size = region1.size + region2.size;
     addArrays(mergedRegion.eSquares, region1.eSquares, region2.eSquares, COLOR_DIM);
     addArrays(mergedRegion.ePixels, region1.ePixels, region2.ePixels, COLOR_DIM);
@@ -320,6 +312,7 @@ void displayRegions(const Mat &input, map<int, Region> regions, map<int, Elt> &u
 
 void scaleSets(const Mat &input, int budget)
 {
+    // n = number of piwels
     map<int, Region> regions; // array of regions
     set<int> activeRegions; // array of regions still present in image
     map<int, Elt> union_find_set; // structure of all regions used for search
@@ -327,6 +320,7 @@ void scaleSets(const Mat &input, int budget)
 
     // REGIONS INIT
 
+    // O(n)
     // create a region for each pixel
     for (int i = 0; i < input.rows; ++i)
         for (int j = 0; j < input.cols; ++j)
@@ -352,6 +346,7 @@ void scaleSets(const Mat &input, int budget)
 
     // LAMBDAS INIT
 
+    // O(4n)
     // initial lambda calculation for every region and their neighbors
     for (int regionId: activeRegions)
         for (int neighborIdx: regions[regionId].adjacentRegions)
@@ -374,7 +369,7 @@ void scaleSets(const Mat &input, int budget)
     double totalNeighbors = 0;
     double lastLambda = -1;
     int count = budget;
-
+    // size of pq 4n
     while (activeRegions.size() > 1 && count != 0)
     {
         timeAtLoopStart = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
@@ -400,10 +395,11 @@ void scaleSets(const Mat &input, int budget)
 
             if (r1Id != r2Id)
             {
+                // O(2log(n))
                 r1 = regions[r1Id];
                 r2 = regions[r2Id];
 
-                // 2 log n
+                // O(2log(n))
                 validMerge = (r1.perimeter == p1 && r2.perimeter == p2) &&
                              (activeRegions.find(r1.id) != activeRegions.end() &&
                               activeRegions.find(r2.id) != activeRegions.end());
@@ -415,6 +411,8 @@ void scaleSets(const Mat &input, int budget)
         }
         timeAfterActiveRegionsPassed = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 
+        // m = number of pixels in region
+        // O(m)
         // r2 is merged into r1, only r1 remains
         int newRegionId = r1.id;
         regions[newRegionId] = merge(r1, r2);
@@ -425,7 +423,10 @@ void scaleSets(const Mat &input, int budget)
         // update neighbors of merged region :
         // delete r2 and add r1 in the neighbors list of merged region neighbors
         set<int> neighborsIds;
+        // O(m)
         Region newR = regions[newRegionId];
+        // k = number of neighbors
+        // O(k * log(k))
         for (int neighborId: regions[newRegionId].adjacentRegions)
         {
             int tNeigId = find_(union_find_set, neighborId);
@@ -443,7 +444,7 @@ void scaleSets(const Mat &input, int budget)
             }
         }
         regions[newRegionId].adjacentRegions = neighborsIds;
-        totalNeighbors += (double) regions[newRegionId].adjacentRegions.size();
+        totalNeighbors += regions[newRegionId].adjacentRegions.size();
 
         activeRegions.erase(activeRegions.find(r2.id));
 
