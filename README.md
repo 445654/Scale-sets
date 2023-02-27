@@ -13,11 +13,13 @@ which talks about the segmentation of an image based on the scale-sets represent
 ## Usage
 
 ```
-Usage: scale set [--help] [--version] image lambda
+Usage: scale set [--help] [--version] image budget
+
+Scale set segmentation algorithm
 
 Positional arguments:
   image         path to input image 
-  lambda        varies from 0 to 1, with 0 meaning no merging and 1 meaning all merging 
+  budget        number of maximum merge allowed by user 
 
 Optional arguments:
   -h, --help    shows help message and exits 
@@ -27,8 +29,6 @@ Optional arguments:
 ```bash
 ./scale-sets example.jpg 0.5
 ```
-
-TODO
 
 ## Algorithm
 
@@ -45,3 +45,8 @@ Here, the energy of a region is its variance, plus its perimeter multiplied by t
 
 The algorithm starts by creating a region for each pixel in the image.  
 Then, it iterates over all the regions to merge them with the constraint describe above, for the desired lambda.
+
+The possible merges are stored in a priority queue, which is sorted by the energy of the resulting region.  
+The merges are done in order of this priority queue, starting with the merge which has the lowest energy.
+
+Regions are stored in a disjoint set, which allows to keep track of the parent of each region.

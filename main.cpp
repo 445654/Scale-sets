@@ -230,7 +230,7 @@ Region merge(const Region &region1, Region &region2)
 //    mergedRegion.adjacentRegions.erase(
 //            find(mergedRegion.adjacentRegions.begin(), mergedRegion.adjacentRegions.end(), region1.id));
 
-    mergedRegion.perimeter = region2.perimeter + region1.perimeter + intersectionPerimeter(region1, region2) * 2;
+    mergedRegion.perimeter = region2.perimeter + region1.perimeter - intersectionPerimeter(region1, region2) * 2;
     mergedRegion.size = region1.size + region2.size;
 
     addArrays(mergedRegion.eSquares, region1.eSquares, region2.eSquares, COLOR_DIM);
@@ -443,7 +443,7 @@ void scaleSets(const Mat &input, int budget)
             }
         }
         regions[newRegionId].adjacentRegions = neighborsIds;
-        totalNeighbors += regions[newRegionId].adjacentRegions.size();
+        totalNeighbors += (double) regions[newRegionId].adjacentRegions.size();
 
         activeRegions.erase(activeRegions.find(r2.id));
 
